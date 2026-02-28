@@ -1,0 +1,24 @@
+{
+  "name": "blockchain-donation-platform",
+  "version": "1.0.0",
+  "description": "Transparent donation platform powered by Ethereum blockchain",
+  "scripts": {
+    "compile": "npx hardhat compile",
+    "test": "npx hardhat test",
+    "deploy:local": "npx hardhat run scripts/deploy.js --network localhost",
+    "deploy:sepolia": "npx hardhat run scripts/deploy.js --network sepolia",
+    "deploy:mainnet": "npx hardhat run scripts/deploy.js --network mainnet",
+    "node": "npx hardhat node",
+    "backend": "cd backend && npm run dev",
+    "frontend": "cd frontend && npm start",
+    "coverage": "npx hardhat coverage"
+  },
+  "devDependencies": {
+    "@nomicfoundation/hardhat-toolbox": "^7.0.0",
+    "dotenv": "^16.0.3",
+    "hardhat": "^3.1.10"
+  },
+  "dependencies": {
+    "@openzeppelin/contracts": "^5.0.1"
+  }
+}
