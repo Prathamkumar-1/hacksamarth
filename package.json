@@ -10,16 +10,19 @@
     "deploy:sepolia": "npx hardhat run scripts/deploy.js --network sepolia",
     "deploy:mainnet": "npx hardhat run scripts/deploy.js --network mainnet",
     "node": "npx hardhat node",
+    "dev": "concurrently \"npm run backend\" \"npm run frontend\"",
     "backend": "cd backend && npm run dev",
     "frontend": "cd frontend && npm start",
     "coverage": "npx hardhat coverage"
   },
   "devDependencies": {
-    "@nomicfoundation/hardhat-toolbox": "^7.0.0",
+    "@nomicfoundation/hardhat-toolbox": "^6.1.2",
+    "concurrently": "^8.2.2",
     "dotenv": "^16.0.3",
     "hardhat": "^3.1.10"
   },
   "dependencies": {
     "@openzeppelin/contracts": "^5.0.1"
-  }
+  },
+  "type": "module"
 }
