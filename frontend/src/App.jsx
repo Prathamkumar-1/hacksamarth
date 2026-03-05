@@ -8,6 +8,7 @@ import ProjectDetail from "./pages/ProjectDetail";
 import Login from "./pages/Login";
 import NGODashboard from "./pages/NGODashboard";
 import UserDashboard from "./pages/UserDashboard";
+import DonationTracker from "./pages/DonationTracker";
 import "./index.css";
 
 const ProtectedRoute = ({ children, roles }) => {
@@ -32,6 +33,9 @@ const AppRoutes = () => (
       } />
       <Route path="/ngo-dashboard" element={
         <ProtectedRoute roles={["ngo","admin"]}><NGODashboard /></ProtectedRoute>
+      } />
+      <Route path="/donation-tracker" element={
+        <ProtectedRoute><DonationTracker /></ProtectedRoute>
       } />
       <Route path="*" element={
         <div style={{ paddingTop: 120, textAlign: "center", minHeight: "100vh" }}>

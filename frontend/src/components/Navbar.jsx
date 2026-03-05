@@ -20,6 +20,7 @@ const Navbar = () => {
     { to: "/projects", label: "Projects" },
     { to: "/ngos", label: "NGOs" },
     { to: "/how-it-works", label: "How It Works" },
+    ...(user && user.address ? [{ to: "/donation-tracker", label: "🔍 My Donations" }] : []),
   ];
 
   return (

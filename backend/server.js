@@ -32,6 +32,7 @@ app.use("/api/auth",      require("./routes/auth"));
 app.use("/api/projects",  require("./routes/projects"));
 app.use("/api/ngos",      require("./routes/ngo"));
 app.use("/api/donations", require("./routes/donations"));
+app.use("/api/proofs",    require("./routes/proofs"));
 
 // 404
 app.use((req, res) => res.status(404).json({ error: "Route not found" }));

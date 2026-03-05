@@ -128,7 +128,7 @@ const NGODashboard = () => {
 
         {/* Tabs */}
         <div style={{ display: "flex", gap: 4, marginBottom: 32 }}>
-          {["overview", "projects", "fund-requests"].map(tab => (
+          {["overview", "projects", "fund-requests", "proofs"].map(tab => (
             <button key={tab} onClick={() => setActiveTab(tab)} style={{
               background: activeTab === tab ? "var(--surface2)" : "none",
               border: `1px solid ${activeTab === tab ? "var(--border2)" : "transparent"}`,
@@ -291,6 +291,27 @@ const NGODashboard = () => {
             </div>
             <div style={{ textAlign: "center", padding: "60px 0", color: "var(--text-dim)" }}>
               No pending fund requests.
+            </div>
+          </div>
+        )}
+
+        {/* Proofs Tab */}
+        {activeTab === "proofs" && (
+          <div>
+            <div style={{
+              background: "rgba(102,126,234,0.05)", border: "1px solid rgba(102,126,234,0.15)",
+              borderRadius: 12, padding: 20, marginBottom: 24,
+            }}>
+              <h4 style={{ marginBottom: 8 }}>📋 Proof of Fund Usage</h4>
+              <p style={{ fontSize: 13, color: "var(--text-dim)", lineHeight: 1.7 }}>
+                Submit proof documents (receipts, invoices, videos, reports) for donations received. Donors can verify that their funds were used properly. You have 30 days to submit proof after receiving a donation. Failure to submit or rejection of proof will result in automatic refund to donors.
+              </p>
+            </div>
+
+            <div style={{ textAlign: "center", padding: "60px 0", color: "var(--text-dim)" }}>
+              <div style={{ fontSize: 32, marginBottom: 16 }}>📄</div>
+              <p>No proof submissions yet.</p>
+              <p style={{ fontSize: 12, marginTop: 8 }}>Create a project and receive donations to see proof submissions here.</p>
             </div>
           </div>
         )}

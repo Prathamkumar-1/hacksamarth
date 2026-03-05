@@ -22,6 +22,7 @@ contract DonationPlatform is ReentrancyGuard, Pausable, AccessControl {
 
     enum ProjectStatus { Pending, Active, Completed, Suspended, Rejected }
     enum FundStatus    { Requested, Approved, Released, Flagged }
+    enum DonationStatus { Pending, ProofSubmitted, Verified, Rejected, Released, Refunded }
 
     struct NGO {
         uint256 id;
@@ -58,7 +59,21 @@ contract DonationPlatform is ReentrancyGuard, Pausable, AccessControl {
         uint256 amount;
         uint256 timestamp;
         string  message;
-        bool    refunded;
+        DonationStatus status;
+        uint256 escrowUntil;
+        uint256 verifiedAt;
+    }
+
+    struct ProofSubmission {
+        uint256 id;
+        uint256 donationId;
+        uint256 projectId;
+        address ngo;
+        string  proofHash;  // IPFS hash of proof
+        string  proofType;  // "receipt", "video", "document"
+        uint256 submittedAt;
+        DonationStatus status;
+        string  verificationReason;
     }
 
     struct FundRequest {
@@ -74,25 +89,34 @@ contract DonationPlatform is ReentrancyGuard, Pausable, AccessControl {
         uint256 rejectionCount;
     }
 
+    uint256 public constant PROOF_SUBMISSION_DEADLINE = 30 days;
+
     mapping(uint256 => NGO)           public ngos;
     mapping(address => uint256)       public ngoIdByAddress;
     mapping(uint256 => Project)       public projects;
     mapping(uint256 => Donation[])    public projectDonations;
+    mapping(uint256 => ProofSubmission[]) public projectProofs;
     mapping(uint256 => FundRequest[]) public projectFundRequests;
     mapping(address => uint256[])     public donorProjects;
     mapping(uint256 => mapping(address => uint256)) public donorAmounts;
     mapping(uint256 => mapping(address => bool))    public hasVotedOnRequest;
+    mapping(uint256 => uint256) public donationIdMap;  // projectId -> donationCount
+    mapping(uint256 => mapping(uint256 => uint256)) public projectDonationBalance;  // projectId -> donationId -> balance in escrow
 
     event NGORegistered(uint256 indexed ngoId, address indexed wallet, string name);
     event NGOVerified(uint256 indexed ngoId, address indexed verifier);
     event ProjectCreated(uint256 indexed projectId, uint256 indexed ngoId, string title, uint256 goal);
     event ProjectStatusUpdated(uint256 indexed projectId, ProjectStatus newStatus);
     event DonationReceived(uint256 indexed projectId, address indexed donor, uint256 amount, uint256 totalRaised);
+    event DonationInEscrow(uint256 indexed projectId, uint256 indexed donationId, address indexed donor, uint256 amount, uint256 escrowUntil);
+    event ProofSubmitted(uint256 indexed projectId, uint256 indexed donationId, address indexed ngo, string proofHash, string proofType);
+    event ProofVerified(uint256 indexed projectId, uint256 indexed donationId, address indexed ngo, uint256 releasedAmount);
+    event ProofRejected(uint256 indexed projectId, uint256 indexed donationId, string reason);
     event FundRequested(uint256 indexed projectId, uint256 indexed requestId, uint256 amount);
     event FundApproved(uint256 indexed requestId, address indexed approver);
     event FundReleased(uint256 indexed requestId, uint256 amount, address indexed ngo);
     event FundFlagged(uint256 indexed requestId, address indexed flagger, string reason);
-    event DonationRefunded(uint256 indexed projectId, address indexed donor, uint256 amount);
+    event DonationRefunded(uint256 indexed projectId, address indexed donor, uint256 amount, string reason);
     event ReputationUpdated(uint256 indexed ngoId, uint256 newScore);
 
     modifier onlyVerifiedNGO() {
@@ -189,14 +213,147 @@ contract DonationPlatform is ReentrancyGuard, Pausable, AccessControl {
         }
         donorAmounts[_projectId][msg.sender] += netDonation;
         project.raisedAmount += netDonation;
-        ngos[project.ngoId].totalRaised += netDonation;
 
+        // Create donation record in escrow
+        uint256 donationId = projectDonations[_projectId].length;
+        uint256 escrowUntil = block.timestamp + PROOF_SUBMISSION_DEADLINE;
+        
         projectDonations[_projectId].push(Donation({
-            id: projectDonations[_projectId].length, projectId: _projectId,
-            donor: msg.sender, amount: netDonation, timestamp: block.timestamp,
-            message: _message, refunded: false
+            id: donationId,
+            projectId: _projectId,
+            donor: msg.sender,
+            amount: netDonation,
+            timestamp: block.timestamp,
+            message: _message,
+            status: DonationStatus.Pending,
+            escrowUntil: escrowUntil,
+            verifiedAt: 0
         }));
+        
+        projectDonationBalance[_projectId][donationId] = netDonation;
+        
         emit DonationReceived(_projectId, msg.sender, netDonation, project.raisedAmount);
+        emit DonationInEscrow(_projectId, donationId, msg.sender, netDonation, escrowUntil);
+    }
+
+    /// @dev NGO submits proof of fund usage (receipt, video, document)
+    function submitProof(
+        uint256 _projectId,
+        uint256 _donationId,
+        string calldata _proofHash,
+        string calldata _proofType
+    ) external projectExists(_projectId) {
+        Project storage project = projects[_projectId];
+        require(project.ngoWallet == msg.sender, "Not project NGO");
+        require(_donationId < projectDonations[_projectId].length, "Invalid donation ID");
+        
+        Donation storage donation = projectDonations[_projectId][_donationId];
+        require(donation.status == DonationStatus.Pending, "Donation not pending");
+        require(block.timestamp <= donation.escrowUntil, "Proof submission deadline passed");
+        require(bytes(_proofHash).length > 0, "Proof hash required");
+        
+        // Validate proof type
+        require(
+            keccak256(bytes(_proofType)) == keccak256(bytes("receipt")) ||
+            keccak256(bytes(_proofType)) == keccak256(bytes("video")) ||
+            keccak256(bytes(_proofType)) == keccak256(bytes("document")),
+            "Invalid proof type"
+        );
+
+        uint256 proofId = projectProofs[_projectId].length;
+        projectProofs[_projectId].push(ProofSubmission({
+            id: proofId,
+            donationId: _donationId,
+            projectId: _projectId,
+            ngo: msg.sender,
+            proofHash: _proofHash,
+            proofType: _proofType,
+            submittedAt: block.timestamp,
+            status: DonationStatus.ProofSubmitted,
+            verificationReason: ""
+        }));
+
+        donation.status = DonationStatus.ProofSubmitted;
+        emit ProofSubmitted(_projectId, _donationId, msg.sender, _proofHash, _proofType);
+    }
+
+    /// @dev Automatic proof verification (on-chain or oracle-based)
+    /// For this implementation, proof is auto-verified after 24 hours if not challenged
+    function verifyProof(
+        uint256 _projectId,
+        uint256 _donationId,
+        bool _approve,
+        string calldata _reason
+    ) external onlyRole(AUDITOR_ROLE) projectExists(_projectId) {
+        require(_donationId < projectDonations[_projectId].length, "Invalid donation ID");
+        
+        Donation storage donation = projectDonations[_projectId][_donationId];
+        require(donation.status == DonationStatus.ProofSubmitted, "Proof not submitted");
+
+        // Find corresponding proof submission
+        ProofSubmission storage proof;
+        uint256 proofIndex = type(uint256).max;
+        
+        for (uint i = 0; i < projectProofs[_projectId].length; i++) {
+            if (projectProofs[_projectId][i].donationId == _donationId) {
+                proof = projectProofs[_projectId][i];
+                proofIndex = i;
+                break;
+            }
+        }
+        require(proofIndex != type(uint256).max, "No proof found for donation");
+
+        if (_approve) {
+            donation.status = DonationStatus.Verified;
+            donation.verifiedAt = block.timestamp;
+            proof.status = DonationStatus.Verified;
+            
+            // Release funds to NGO
+            Project storage project = projects[_projectId];
+            uint256 escrowAmount = projectDonationBalance[_projectId][_donationId];
+            projectDonationBalance[_projectId][_donationId] = 0;
+            project.releasedAmount += escrowAmount;
+            
+            (bool success, ) = project.ngoWallet.call{value: escrowAmount}("");
+            require(success, "Fund release failed");
+            
+            _rewardNGO(project.ngoId);
+            emit ProofVerified(_projectId, _donationId, project.ngoWallet, escrowAmount);
+        } else {
+            donation.status = DonationStatus.Rejected;
+            proof.status = DonationStatus.Rejected;
+            proof.verificationReason = _reason;
+            
+            _penalizeNGO(projects[_projectId].ngoId);
+            emit ProofRejected(_projectId, _donationId, _reason);
+        }
+    }
+
+    /// @dev Refund donation if deadline passed without approval
+    function refundDonationIfExpired(uint256 _projectId, uint256 _donationId)
+        external nonReentrant projectExists(_projectId)
+    {
+        require(_donationId < projectDonations[_projectId].length, "Invalid donation ID");
+        
+        Donation storage donation = projectDonations[_projectId][_donationId];
+        require(donation.status == DonationStatus.Pending || donation.status == DonationStatus.Rejected, 
+                "Cannot refund this donation");
+        require(block.timestamp > donation.escrowUntil, "Deadline not passed");
+
+        uint256 refundAmount = projectDonationBalance[_projectId][_donationId];
+        require(refundAmount > 0, "No funds to refund");
+
+        projectDonationBalance[_projectId][_donationId] = 0;
+        donation.status = DonationStatus.Refunded;
+        
+        Project storage project = projects[_projectId];
+        project.raisedAmount -= refundAmount;
+
+        (bool success, ) = donation.donor.call{value: refundAmount}("");
+        require(success, "Refund failed");
+
+        string memory reason = donation.status == DonationStatus.Rejected ? "Proof rejected" : "Proof deadline expired";
+        emit DonationRefunded(_projectId, donation.donor, refundAmount, reason);
     }
 
     function requestFundRelease(
@@ -262,7 +419,7 @@ contract DonationPlatform is ReentrancyGuard, Pausable, AccessControl {
         ngos[project.ngoId].totalRaised -= amount;
         (bool success, ) = msg.sender.call{value: amount}("");
         require(success, "Refund failed");
-        emit DonationRefunded(_projectId, msg.sender, amount);
+        emit DonationRefunded(_projectId, msg.sender, amount, "Project cancelled/failed");
     }
 
     function _rewardNGO(uint256 _ngoId) internal {
@@ -279,12 +436,43 @@ contract DonationPlatform is ReentrancyGuard, Pausable, AccessControl {
         }
     }
 
-    function getProject(uint256 _projectId) external view returns (Project memory) { return projects[_projectId]; }
-    function getNGO(uint256 _ngoId) external view returns (NGO memory) { return ngos[_ngoId]; }
-    function getDonorAmount(uint256 _projectId, address _donor) external view returns (uint256) { return donorAmounts[_projectId][_donor]; }
-    function getProjectDonations(uint256 _projectId) external view returns (Donation[] memory) { return projectDonations[_projectId]; }
-    function getProjectFundRequests(uint256 _projectId) external view returns (FundRequest[] memory) { return projectFundRequests[_projectId]; }
-    function getDonorProjects(address _donor) external view returns (uint256[] memory) { return donorProjects[_donor]; }
+    // Getter functions
+    function getProject(uint256 _projectId) external view returns (Project memory) { 
+        return projects[_projectId]; 
+    }
+    
+    function getNGO(uint256 _ngoId) external view returns (NGO memory) { 
+        return ngos[_ngoId]; 
+    }
+    
+    function getDonation(uint256 _projectId, uint256 _donationId) external view returns (Donation memory) {
+        require(_donationId < projectDonations[_projectId].length, "Invalid donation ID");
+        return projectDonations[_projectId][_donationId];
+    }
+    
+    function getDonorAmount(uint256 _projectId, address _donor) external view returns (uint256) { 
+        return donorAmounts[_projectId][_donor]; 
+    }
+    
+    function getProjectDonations(uint256 _projectId) external view returns (Donation[] memory) { 
+        return projectDonations[_projectId]; 
+    }
+    
+    function getProjectProofs(uint256 _projectId) external view returns (ProofSubmission[] memory) {
+        return projectProofs[_projectId];
+    }
+    
+    function getProjectFundRequests(uint256 _projectId) external view returns (FundRequest[] memory) { 
+        return projectFundRequests[_projectId]; 
+    }
+    
+    function getDonorProjects(address _donor) external view returns (uint256[] memory) { 
+        return donorProjects[_donor]; 
+    }
+    
+    function getDonationBalance(uint256 _projectId, uint256 _donationId) external view returns (uint256) {
+        return projectDonationBalance[_projectId][_donationId];
+    }
 
     function setPlatformFee(uint256 _feePercent) external onlyRole(ADMIN_ROLE) {
         require(_feePercent <= 10, "Max 10%");
